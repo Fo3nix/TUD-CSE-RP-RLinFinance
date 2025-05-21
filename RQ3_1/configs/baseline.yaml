@@ -1,0 +1,53 @@
+
+pair: "EUR_USD"
+granularity: "H1"
+start_date: "2015-01-01"
+end_date: "2024-12-31"
+
+data:
+  ask_csv: "/Users/justasbertasius/PycharmProjects/TUD-CSE-RP-RLinFinance(1)/data/EURUSD_Candlestick_1_Hour_ASK_01.01.2023-01.01.2025.csv"
+  bid_csv: "/Users/justasbertasius/PycharmProjects/TUD-CSE-RP-RLinFinance(1)/data/EURUSD_Candlestick_1_Hour_BID_01.01.2023-01.01.2025 (1).csv"
+  train_start: "2023-01-01"
+  train_end: "2024-07-31"
+  test_start: "2024-08-01"
+  test_end: "2025-01-01"
+
+#algo:
+#  name: "ppo"
+#  total_timesteps: 150000
+#  policy: "MlpPolicy"
+#  learning_rate: 0.00003
+#  seed: 42
+#  ent_coef: 0.05
+
+algo:
+  total_timesteps:   15000
+  learning_rate:     0.0001
+  buffer_size:       100000
+  batch_size:        256
+  tau:               0.005
+  gamma:             0.99
+  exploration_fraction: 0.1
+  exploration_final_eps: 0.02
+  target_update_interval: 10000
+  seed:              42
+
+reward:
+  name: "profit"
+  params: {}
+
+#reward:
+#  name: "sharpe"
+#  params:
+#    windows: [10, 50, 100]
+
+evaluation:
+  metrics: ["sharpe", "sortino", "cvar", "cum_returns", "max_drawdown"]
+
+env:
+  commission: 0.00005       # 0.005% of notional
+  dynamic_spread: true      # enables real spread from ASK - BID
+
+logging:
+  project: "rl-fx-rq3"
+  group: "baseline"

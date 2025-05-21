@@ -1,0 +1,17 @@
+{
+  "os": "macOS-15.3.2-arm64-arm-64bit",
+  "python": "CPython 3.10.0",
+  "startedAt": "2025-05-08T16:38:11.821645Z",
+  "args": [
+    "--config",
+    "RQ3/configs/baseline.yaml"
+  ],
+  "program": "-m RQ3.experiments.run_experiment",
+  "git": {
+    "remote": "https://github.com/Fo3nix/TUD-CSE-RP-RLinFinance.git",
+    "commit": "954226b23c7d956b1b3f67dbb01906de6fba417c"
+  },
+  "root": "/Users/justasbertasius/PycharmProjects/TUD-CSE-RP-RLinFinance(1)",
+  "host": "Mac.home",
+  "executable": "/Users/justasbertasius/PycharmProjects/TUD-CSE-RP-RLinFinance(1)/.venv/bin/python"
+}
