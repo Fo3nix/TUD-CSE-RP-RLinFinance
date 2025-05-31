@@ -53,7 +53,7 @@ Deep Reinforcement Learning
 
 Model categorization
 
-- **Policy vs Value-based** methods: Value-based methods try to learn a value function directly, and then derive the optimal policy using it. Policy-based methods try to learn the optimal policy directly.
+- **Policy vs Value-based** methods: Value-based methods try to learn a value function, and then derive the optimal policy using it. Policy-based methods try to learn the optimal policy directly.
 - **Policy-gradient methods**: subset of policy-based methods that use gradient descent on the expected return to approximate the optimal policy.
 - **Actor-critic methods**: combines value and policy based methods. It uses two seperate components: the actor, that is responsible for selecting actions (representing the policy), and the critic, evaluating the actions taken by the actor (using a value function).
 - **Model-free vs. model-based**: Model-free methods learn directly from interactions without understanding the environment's dynamics, while model-based methods build a model of the environment in order to plan ahead.
@@ -103,4 +103,9 @@ Trading
 - **Forex currency pair**: a combination of currencies that are traded against eachother. First currency being the base currency, second being the quote currency. The pair shows how much quote currency you need to buy one unit of the base currency. Ex. EUR/USD, GBP/USD, USD/JPY, etc.
 - **Timeframe**: the duration that each data point (or candlestick) represents on a chart. It determines the granularity of the data the RL agent learns from
 - **Candlestick**: a visual representation of price movement over a specific timeframe. It provides four key pieces of information: Open: Price at the beginning of the timeframe. High: Highest price during the timeframe. Low: Lowest price during the timeframe. Close: Price at the end of the timeframe. Volume: Total transaction amount during the timeframe. (sometimes included in the data)
-- **Ticker**: 
+
+- **Ask vs Bid**
+- **Spread**
+- **Long, Short, Cash**
+- **Buy, Sell, Hold**
+- **Equity**
