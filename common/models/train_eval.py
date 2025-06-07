@@ -1,7 +1,7 @@
 import json
 import logging
 from functools import partial
-from multiprocessing import Manager, Process, Lock
+from multiprocessing import Lock, Manager, Process
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,16 +11,13 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 from tqdm import tqdm
 
-from common.constants import MarketDataCol
-from common.data.data import ForexCandleData
-from common.data.feature_engineer import FeatureEngineer, copy_columns
-from common.data.stepwise_feature_engineer import StepwiseFeatureEngineer
 from common.envs.callbacks import SaveOnEpisodeEndCallback
 from common.envs.forex_env import ForexEnv
-from common.models.analysis import analyse_individual_run, analyse_finals
+from common.models.analysis import analyse_finals, analyse_individual_run
 from common.models.dummy_models import DUMMY_MODELS
-from common.models.utils import save_model_with_metadata, load_model_with_metadata
-from common.scripts import parallel_run
+from common.models.utils import (load_model_with_metadata, load_models,
+                                 save_model_with_metadata)
+from common.scripts import parallel_run, set_seed
 
 
 def run_experiment(train_env: ForexEnv,
@@ -58,7 +55,7 @@ def run_experiment(train_env: ForexEnv,
 
     callbacks = []
     if checkpoints:
-        callbacks.append(SaveOnEpisodeEndCallback(save_path=models_path))
+        callbacks.append(SaveOnEpisodeEndCallback(models_dir=models_path))
 
     train_model(model, train_env=train_env, train_episodes=train_episodes, callback=callbacks)
 
