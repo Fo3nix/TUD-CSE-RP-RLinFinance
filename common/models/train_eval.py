@@ -1,7 +1,7 @@
 import json
 import logging
 from functools import partial
-from multiprocessing import Pool, current_process, Manager, Process, Lock
+from multiprocessing import Manager, Process, Lock
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,10 +17,10 @@ from common.data.feature_engineer import FeatureEngineer, copy_columns
 from common.data.stepwise_feature_engineer import StepwiseFeatureEngineer
 from common.envs.callbacks import SaveOnEpisodeEndCallback
 from common.envs.forex_env import ForexEnv
-from common.models.dummy_models import DUMMY_MODELS
-from common.scripts import set_seed, parallel_run
-from common.models.utils import load_models, save_model_with_metadata, load_model_with_metadata
 from common.models.analysis import analyse_individual_run, analyse_finals
+from common.models.dummy_models import DUMMY_MODELS
+from common.models.utils import save_model_with_metadata, load_model_with_metadata
+from common.scripts import parallel_run
 
 
 def run_experiment(train_env: ForexEnv,
@@ -58,7 +58,7 @@ def run_experiment(train_env: ForexEnv,
 
     callbacks = []
     if checkpoints:
-        callbacks.append(SaveOnEpisodeEndCallback(models_dir=models_path))
+        callbacks.append(SaveOnEpisodeEndCallback(save_path=models_path))
 
     train_model(model, train_env=train_env, train_episodes=train_episodes, callback=callbacks)
 
