@@ -3,7 +3,7 @@ import numpy as np
 from common.constants import MarketDataCol
 from common.envs.forex_env import ForexEnv, AgentDataCol
 from RQ3.reward_helper import equity_window
-from common.rewards import equity_change
+from common.envs.rewards import equity_change
 
 
 def risk_adjusted_return(env: ForexEnv) -> float:

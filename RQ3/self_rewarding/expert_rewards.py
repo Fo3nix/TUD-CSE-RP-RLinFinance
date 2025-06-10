@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 
+from common.constants import AgentDataCol
+
 
 def expert_reward_vector(
         env,
@@ -17,7 +19,7 @@ def expert_reward_vector(
     • LONG   (action 2) → +1 position
     """
     pos = torch.tensor([-1.0, 0.0, 1.0])  # per-action multipliers
-    t = env.current_step  # <- FIX: define t
+    t = env.agent_data[env.n_steps, AgentDataCol.pre_action_equity]  # <- FIX: define t
 
     # ---- obtain close-price history ---------------------------------
     try:

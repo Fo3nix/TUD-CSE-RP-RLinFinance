@@ -8,7 +8,7 @@ logging.info("Loading imports...")
 from datetime import datetime
 from pathlib import Path
 
-from common.envs.callbacks import (ActionHistogramCallback, CoolStatsCallback,
+from common.envs.callbacks import (ActionHistogramCallback,
                                    SaveCallback, SaveOnEpisodeEndCallback)
 from common.models.train_eval import (analyse_results, evaluate_models,
                                       train_model)
@@ -21,7 +21,7 @@ logging.info("Done.")
 
 
 def train():
-    train_env, _ = get_environments(type='self', shuffled=True)
+    train_env, _ = get_environments(type='normal', shuffled=True)
     save_freq = 20_000
 
     model = get_model('DQN', train_env)
@@ -32,8 +32,7 @@ def train():
     models_dir.mkdir(parents=True, exist_ok=True)
 
     callback = [SaveCallback(models_dir, save_freq=save_freq),
-                ActionHistogramCallback(train_env, log_freq=train_env.total_steps),
-                CoolStatsCallback(train_env, log_freq=train_env.total_steps)]
+                ActionHistogramCallback(train_env, log_freq=save_freq)]
     train_model(model, train_env, train_episodes=3, callback=callback)
     save_model_with_metadata(model, models_dir / "model_final.zip")
 
