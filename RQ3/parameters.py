@@ -5,7 +5,6 @@ from stable_baselines3 import DQN, A2C
 from torch import nn, optim
 from torch.nn import ReLU, LeakyReLU
 
-from RQ1.custom_a2c_policy import A2C_LSTM_Policy
 from RQ3.self_rewarding.expert_rewards import expert_reward_vector
 from RQ3.self_rewarding.reward_net import RewardNet, SelfRewardingEnv
 from common.data.data import ForexCandleData, Timeframe
@@ -186,7 +185,7 @@ def get_model(mod, env: ForexEnv):
 
     if mod == 'A2C':
         model = A2C(
-            policy=A2C_LSTM_Policy,
+            policy="MlpPolicy",
             env=env,
             learning_rate=1e-4,
             n_steps=128,
