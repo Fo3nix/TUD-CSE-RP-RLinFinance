@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from common.constants import AgentDataCol
+from common.constants import AgentDataCol, MarketDataCol
 
 
 def expert_reward_vector(
@@ -19,13 +19,13 @@ def expert_reward_vector(
     • LONG   (action 2) → +1 position
     """
     pos = torch.tensor([-1.0, 0.0, 1.0])  # per-action multipliers
-    t = env.agent_data[env.n_steps, AgentDataCol.pre_action_equity]  # <- FIX: define t
+    t = env.n_steps # <- FIX: define t
 
     # ---- obtain close-price history ---------------------------------
     try:
-        prices = env.market_data[:, env.price_col_close]
+        prices = env.market_data[:, MarketDataCol.close_bid]
     except AttributeError:
-        prices = env.prices  # adjust to your env layout
+        raise TypeError('pricesssss') # adjust to your env layout
 
     # -----------------------------------------------------------------
     if label == "return":

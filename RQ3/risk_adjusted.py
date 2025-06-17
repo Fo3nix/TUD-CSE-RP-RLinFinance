@@ -10,7 +10,7 @@ def risk_adjusted_return(env: ForexEnv) -> float:
     """
     Calculate the risk-adjusted return based on the Sharpe ratio.
     """
-    current_time_step = env.current_step
+    current_time_step = env.n_steps
 
     current_equity_change = equity_change(env)
     volatility = env.agent_data[current_time_step, AgentDataCol.equity_high] - env.agent_data[
@@ -42,7 +42,7 @@ def volatility_scaled_reward(env,
     - A single float reward for time t. If t < max(window, 2), returns 0.0.
     """
 
-    t = env.current_step
+    t = env.n_steps
 
     # Need at least window bars to estimate σ_{t-1}, and at least 2 steps to have A_{t-2}.
     if t < window or t < 2:
@@ -95,56 +95,75 @@ def volatility_scaled_reward(env,
     reward = vol_scaling * (A_tm1 * r_t - trans_cost)
     return float(reward)
 
+def hybrid_reward(env):
+    sr = sharpe_ratio_reward(env)
+    immediate = env.agent_data[env.n_steps + 1, AgentDataCol.equity_close] - \
+                env.agent_data[env.n_steps, AgentDataCol.equity_close]
+    return sr + 0.1 * immediate
 
 def sharpe_ratio_reward(
-        env: ForexEnv,
-        window: int = 30,  # rolling window (steps)
-        risk_free_rate: float = 0.0,  # per-step risk-free rate
-        annual_factor: int = 252  # ≈ trading days / year
+    env,
+    window: int = 100,
+    risk_free_rate: float = 0.0,
+    annual_factor: int = 252
 ) -> float:
     """
-    Rolling Sharpe ratio of equity returns.
+    Rolling Sharpe ratio of equity_close returns.
     Returns 0 if not enough data yet or σ == 0.
     """
-    if env.current_step < 1:
+    cur = int(env.n_steps)
+    if cur < 2:
         return 0.0
 
-    # series = equity_change(env)
-    series = equity_window(env, window)
+    start = max(0, cur - window + 1)
+    series = env.agent_data[start:cur + 1, AgentDataCol.equity_close]
+
     if len(series) < 2:
         return 0.0
 
-    rets = np.diff(series[10:]) / series[10:-1]
+    # use recent returns only (drop burn-in)
+    rets = np.diff(series) / series[:-1]
+    if len(rets) < 5:
+        return 0.0
+
     excess = rets - risk_free_rate
     sigma = np.std(excess, ddof=1)
     if sigma == 0:
         return 0.0
+
     sharpe = np.sqrt(annual_factor) * np.mean(excess) / sigma
     return float(sharpe)
-
 
 # ------------------------------------------------------------------ #
 # 3) Mean-variance utility reward
 # ------------------------------------------------------------------ #
 def mean_variance_reward(
-        env: ForexEnv,
-        window: int = 30,
-        lam: float = 1.0  # risk-aversion parameter λ
+    env,
+    window: int = 30,
+    lam: float = 1.0
 ) -> float:
     """
-    μ − λ·σ² over a rolling window of returns.
-    Higher λ penalises variance more strongly.
+    μ − λ·σ² over a rolling window of equity_close returns.
+    Returns 0.0 if insufficient data.
     """
-    if env.current_step < 1:
+    cur = int(env.n_steps)
+    if cur < 2:
         return 0.0
-    series = equity_window(env, window)
+
+    start = max(0, cur - window + 1)
+    series = env.agent_data[start:cur + 1, AgentDataCol.equity_close]
+
     if len(series) < 2:
         return 0.0
 
     rets = np.diff(series) / series[:-1]
+    if len(rets) < 2:   # 🔒 this is the key fix
+        return 0.0
+
     mu = np.mean(rets)
     var = np.var(rets, ddof=1)
     return float(mu - lam * var)
+
 
 
 # ------------------------------------------------------------------ #
@@ -159,13 +178,17 @@ def cvar_reward(
     Negative Conditional Value-at-Risk (CVaR) of returns.
     Reward is –CVaR, so *smaller* expected tail losses ⇒ *larger* reward.
     """
-    if env.current_step < 1:
+    cur = int(env.n_steps)
+    if cur < 2:
         return 0.0
-    series = equity_window(env, window)
+    start = max(0, cur - window + 1)
+    series = env.agent_data[start:cur + 1, AgentDataCol.equity_close]
     if len(series) < 2:
         return 0.0
 
     rets = np.diff(series) / series[:-1]
+    if len(rets) < 2:   # 🔒 this is the key fix
+        return 0.0
     var_level = np.quantile(rets, alpha)
     tail = rets[rets <= var_level]
     if tail.size == 0:

@@ -30,23 +30,28 @@ def multi_objective_reward(
     r_profit = equity_change(env)  # Δ-equity since last step
 
     # 2) Risk penalty = –variance of recent returns  (≤ 0)
-    series = equity_window(env, risk_window)
-    if len(series) > 1:
+    cur = int(env.n_steps)
+    if cur < 2:
+        return 0.0
+    start = max(0, cur - risk_window + 1)
+    series = env.agent_data[start:cur + 1, AgentDataCol.equity_close]
+    r_risk = 0.0
+    if len(series) < 2:
+        r_risk = 0.0
+    else:
         rets = np.diff(series) / series[:-1]
         r_risk = -np.var(rets, ddof=1)
-    else:
-        r_risk = 0.0
 
     # 3) Transaction-cost penalty  (≤ 0)
     try:
-        tc = env.agent_data[env.current_step, AgentDataCol.transaction_cost]
+        tc = env.agent_data[env.n_steps, env.transaction_cost_pct]
         r_tc = -float(tc)
     except (AttributeError, IndexError):
         # Fallback if the environment does not store per-step costs
         r_tc = 0.0
 
     # 4) Drawdown penalty = current (negative) drawdown  (≤ 0)
-    eq = series[-1] if len(series) else env.agent_data[env.current_step, AgentDataCol.equity_close]
+    eq = series[-1] if len(series) else env.agent_data[env.n_steps, AgentDataCol.equity_close]
     max_eq = np.max(series) if len(series) else eq
     r_dd = (eq - max_eq) / max_eq if max_eq > 0 else 0.0  # 0 ≤ r_dd ≤ 0
 

@@ -1,80 +1,215 @@
+import logging
+from datetime import datetime
+import sys
 import os
 
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-import logging
+from RQ3.imitation_learning.oracle_lables import oracle_labels
+from RQ3.imitation_learning.rif_reward import RIFReward
+from RQ3.self_rewarding.expert_rewards import expert_reward_vector
+from RQ3.self_rewarding.reward_net import RewardNet, SelfRewardingEnv
+from RQ3.constants import EXPERIMENTS_DIR, EXPERIMENT_NAME_FORMAT
+from RQ3.risk_adjusted import sharpe_ratio_reward, hybrid_reward, mean_variance_reward, cvar_reward
+from RQ3.multi_obj import multi_objective_reward
+
+# Ensure root path is in sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from common.data.data import ForexCandleData, Timeframe
+from common.envs.forex_env import ForexEnv
+from common.envs.rewards import *
+from common.data.stepwise_feature_engineer import StepwiseFeatureEngineer, calculate_current_exposure
+from common.data.feature_engineer import FeatureEngineer, as_pct_change, ema, rsi, copy_column, \
+    as_ratio_of_other_column, as_min_max_fixed
+from common.constants import SEED, MarketDataCol
+from common.envs.callbacks import *
+from common.models.train_eval import train_model
+from common.models.utils import save_model_with_metadata
+from common.scripts import picker, has_nonempty_subdir, n_children
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.info("Loading imports...")
-from datetime import datetime
-from pathlib import Path
-
-from common.envs.callbacks import (ActionHistogramCallback,
-                                   SaveCallback, SaveOnEpisodeEndCallback)
-from common.models.train_eval import (analyse_results, evaluate_models,
-                                      train_model)
-from common.models.utils import save_model_with_metadata
-from common.scripts import has_nonempty_subdir, n_children, picker
-from RQ3.constants import EXPERIMENT_NAME_FORMAT, EXPERIMENTS_DIR
-from RQ3.parameters import get_environments, get_model
-
-logging.info("Done.")
 
 
-def train():
-    train_env, _ = get_environments(type='normal', shuffled=True)
-    save_freq = 20_000
+def get_feature_engineer():
+    fe = FeatureEngineer()
 
-    model = get_model('DQN', train_env)
+    def price_change(df):
+        copy_column(df, "close_bid", "close_pct_change_1")
+        as_pct_change(df, "close_pct_change_1", periods=1)
+        copy_column(df, "close_bid", "close_pct_change_5")
+        as_pct_change(df, "close_pct_change_5", periods=5)
 
-    experiment_name = datetime.now().strftime(EXPERIMENT_NAME_FORMAT)
-    experiment_dir = EXPERIMENTS_DIR / experiment_name
-    models_dir = experiment_dir / "models"
+    def trend(df):
+        ema(df, window=20)
+        as_ratio_of_other_column(df, "ema_20_close_bid", "close_bid")
+        ema(df, window=50)
+        as_ratio_of_other_column(df, "ema_50_close_bid", "close_bid")
+
+    def oscillator(df):
+        rsi(df, window=14)
+        as_min_max_fixed(df, "rsi_14", 0, 100)
+
+    fe.add(price_change)
+    fe.add(trend)
+    fe.add(oscillator)
+    return fe
+
+def expert_reward_minmax(env):
+    return expert_reward_vector(env, label='minmax')
+def get_environments(type='normal'):
+    logging.info("Loading market data...")
+    data = ForexCandleData.load(
+        source="dukascopy",
+        instrument="EURUSD",
+        granularity=Timeframe.M15,
+        start_time=datetime(2022, 1, 2, 22),
+        end_time=datetime(2025, 5, 16, 20, 45),
+    )
+
+    logging.info("Creating feature pipelines...")
+    market_fe = get_feature_engineer()
+    agent_fe = StepwiseFeatureEngineer()
+    agent_fe.add(["current_exposure"], calculate_current_exposure)
+
+    logging.info("Building environments...")
+    train_env, eval_env = ForexEnv.create_split_envs(
+        split_pcts=[0.8, 0.2],
+        forex_candle_data=data,
+        market_feature_engineer=market_fe,
+        agent_feature_engineer=agent_fe,
+        initial_capital=10000.0,
+        transaction_cost_pct=0.0,
+        n_actions=3,
+        custom_reward_function=multi_objective_reward
+    )
+
+    if type == 'normal':
+        return train_env, eval_env
+    elif type == 'self':
+        reward_net_train = RewardNet(
+            obs_dim=train_env.observation_space.shape[0],
+            n_actions=3,
+            model_type="nlinear"  # "timesnet" | "wftnet" | "nlinear"
+        )
+
+        train_self_env = SelfRewardingEnv(
+            train_env,
+            reward_net_train,
+            expert_reward_minmax
+        )
+
+        reward_net_eval = RewardNet(
+            obs_dim=eval_env.observation_space.shape[0],
+            n_actions=3,
+            model_type="mlp"  # "timesnet" | "wftnet" | "nlinear"
+        )
+
+        eval_self_env = SelfRewardingEnv(
+            eval_env,
+            reward_net_train,
+            expert_reward_minmax
+        )
+        return train_self_env, eval_self_env
+    else:
+        prices = train_env.market_data[:, MarketDataCol.close_bid]
+        y_labels = oracle_labels(prices, commission_bps=3)  # or load from cache
+        rif_train_env = RIFReward(train_env, y_labels, phi_bps=3, theta_bps=3)
+
+        prices = eval_env.market_data[:, MarketDataCol.close_bid]
+        y_labels = oracle_labels(prices, commission_bps=3)  # or load from cache
+        rif_eval_env = RIFReward(eval_env, y_labels, phi_bps=3, theta_bps=3)
+
+        return rif_train_env, rif_eval_env
+
+def train(exploration_strategy: str):
+    train_env, _ = get_environments()
+    logging.info("Instantiating DQN model...")
+
+    dqn_args = dict(
+        policy="MlpPolicy",
+        env=train_env,
+        learning_rate=1e-4,
+        buffer_size=50000,
+        learning_starts=1000,
+        batch_size=64,
+        gamma=0.99,
+        target_update_interval=500,
+        train_freq=4,
+        policy_kwargs=dict(net_arch=[128, 128]),
+        seed=SEED,
+        verbose=1,
+        device="cpu"
+    )
+
+    if exploration_strategy == "epsilon_greedy":
+        from stable_baselines3 import DQN
+        dqn_args.update({
+            "exploration_initial_eps": 1.0,
+            "exploration_final_eps": 0.05,
+            "exploration_fraction": 0.8
+        })
+        model = DQN(**dqn_args)
+
+    elif exploration_strategy == "boltzmann":
+        from RQ5.boltzmann_dqn import BoltzmannDQN
+        model = BoltzmannDQN(**dqn_args, temperature=1.0)
+    elif exploration_strategy == "max_boltzmann":
+        from RQ5.boltzmann_dqn import MaxBoltzmannDQN
+        model = MaxBoltzmannDQN(**dqn_args, epsilon=0.1, temperature=1.0)
+
+    else:
+        raise ValueError(f"Unknown exploration strategy: {exploration_strategy}")
+
+    exp_name = f"{datetime.now().strftime(EXPERIMENT_NAME_FORMAT)}_{exploration_strategy}"
+    exp_dir = EXPERIMENTS_DIR / exp_name
+    models_dir = exp_dir / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
 
-    callback = [SaveCallback(models_dir, save_freq=save_freq),
-                ActionHistogramCallback(train_env, log_freq=save_freq)]
-    train_model(model, train_env, train_episodes=3, callback=callback)
+    callback = [SaveCallback(models_dir, save_freq=train_env.episode_len),
+                ActionHistogramCallback(train_env, log_freq=train_env.episode_len),
+                SneakyLogger(verbose=1)]
+
+    logging.info("Training...")
+    train_model(model, train_env, train_episodes=1, callback=callback)
     save_model_with_metadata(model, models_dir / "model_final.zip")
 
 
 def evaluate(experiments_dir, limit=10):
-    experiment_dirs: list[Path] = list(experiments_dir.iterdir())
-    experiment_dirs = list(f for f in experiment_dirs if has_nonempty_subdir(f, "models"))
-    experiment_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    experiment_dirs = experiment_dirs[:limit] if limit is not None else experiment_dirs
-    named_dirs = list((f"{f.name} ({n_children(f / "models")})", f) for f in experiment_dirs)
+    from common.models.train_eval import evaluate_models
 
-    experiment_dir = picker(named_dirs)
-    models_dir = experiment_dir / "models"
-    results_dir = experiment_dir / "results"
+    dirs = sorted([
+        f for f in experiments_dir.iterdir() if has_nonempty_subdir(f, "models")
+    ], key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
+
+    exp_dir = picker([(f"{f.name} ({n_children(f / 'models')})", f) for f in dirs])
+    models_dir = exp_dir / "models"
+    results_dir = exp_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    train_env, eval_env = get_environments(type='self', shuffled=False)
-    eval_envs = {
-        "train": train_env,
-        "eval": eval_env,
-    }
-
-    evaluate_models(models_dir, results_dir, eval_envs, eval_episodes=1, num_workers=4)
+    train_env, eval_env = get_environments()
+    evaluate_models(models_dir, results_dir, {"train": train_env, "eval": eval_env}, eval_episodes=1)
 
 
 def analyze(experiments_dir, limit=10):
-    experiment_dirs: list[Path] = list(experiments_dir.iterdir())
-    experiment_dirs = list(f for f in experiment_dirs if has_nonempty_subdir(f, "results"))
-    experiment_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    experiment_dirs = experiment_dirs[:limit] if limit is not None else experiment_dirs
-    named_dirs = list((f"{f.name} ({n_children(f / "results")})", f) for f in experiment_dirs)
+    from common.models.train_eval import analyse_results
 
-    experiment_dir = picker(named_dirs)
-    results_dir = experiment_dir / "results"
+    dirs = sorted([
+        f for f in experiments_dir.iterdir() if has_nonempty_subdir(f, "results")
+    ], key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
 
-    analyse_results(results_dir)
+    exp_dir = picker([(f"{f.name} ({n_children(f / 'results')})", f) for f in dirs])
+    analyse_results(exp_dir / "results")
 
 
 if __name__ == "__main__":
-    options = [
-        ("train", train),
-        ("eval", lambda: evaluate(EXPERIMENTS_DIR, 10)),
-        ("analyze", lambda: analyze(EXPERIMENTS_DIR, 10)),
+    import sys
+    import os
+
+    # Add the root directory to sys.path
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    strategies = ["epsilon_greedy"]
+    options = [(f"train_{s}", lambda s=s: train(s)) for s in strategies]
+    options += [
+        ("eval", lambda: evaluate(EXPERIMENTS_DIR)),
+        ("analyze", lambda: analyze(EXPERIMENTS_DIR)),
     ]
     picker(options, default=None)()

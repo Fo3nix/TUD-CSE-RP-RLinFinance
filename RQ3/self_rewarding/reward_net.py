@@ -6,6 +6,7 @@ import torch.nn as nn
 from typing import Literal
 from typing import Callable
 import gymnasium as gym
+from pytorch_forecasting import TemporalFusionTransformer
 
 # Optional: pip install timesnet-pytorch  wftnet-pytorch  nlinear-pytorch
 try:
@@ -15,6 +16,13 @@ try:
 except ImportError:
     TimesNet = WFTNet = NLinear = None  # graceful fallback
 
+class NLinear(nn.Module):
+    def __init__(self, input_size: int, target_size: int):
+        super().__init__()
+        self.linear = nn.Linear(input_size, target_size)
+
+    def forward(self, x):
+        return self.linear(x)
 
 class RewardNet(nn.Module):
     """
@@ -47,6 +55,21 @@ class RewardNet(nn.Module):
                 nn.Linear(obs_dim, hidden[0]),
                 nn.GELU()  # simple non-linearity
             )
+        elif model_type == "tft":
+            assert TemporalFusionTransformer, "pip install tft-pytorch"
+            self.backbone = TemporalFusionTransformer(
+                num_inputs=obs_dim, num_outputs=hidden[0], seq_len=1, attn_dropout=0.0
+            )
+
+        # elif model_type == "wavenet":
+        #     assert WaveNet, "pip install wavenet-pytorch"
+        #     self.backbone = WaveNet(
+        #         dim=obs_dim,
+        #         depth=4,
+        #         dim_out=hidden[0],
+        #         context_size=1  # small receptive field for per-step use
+        #     )
+
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
 
@@ -59,9 +82,22 @@ class RewardNet(nn.Module):
         )
 
     def forward(self, x):
-        # x shape: (B, obs_dim)
-        feats = self.backbone(x.unsqueeze(1))  # many libs expect (B, C=1, L)
-        return self.head(feats.squeeze(1))  # (B, n_actions)
+        if self.model_type in {"timesnet", "wftnet", "nlinear", "mlp"}:
+            feats = self.backbone(x.unsqueeze(1))  # → (B, 1, F)
+            feats = feats.squeeze(1)  # → (B, F)
+
+        elif self.model_type == "tft":
+            feats = self.backbone(x.unsqueeze(1))  # TFT expects (B, T, C)
+            feats = feats.squeeze(1)  # → (B, F)
+
+        elif self.model_type == "wavenet":
+            feats = self.backbone(x.unsqueeze(1))  # WaveNet expects (B, T, C)
+            feats = feats.squeeze(1)  # → (B, F)
+
+        else:
+            raise NotImplementedError(f"Forward path for {self.model_type}")
+
+        return self.head(feats)  # → (B, n_actions)
 
 class SelfRewardingEnv(gym.Wrapper):
     """
@@ -116,5 +152,9 @@ class SelfRewardingEnv(gym.Wrapper):
         obs, info = self.env.reset(*args, **kwargs)
         return obs, info
 
-    def __getattr__(self, name):
-        return getattr(self.env, name)
+    # def __getattr__(self, name):
+    #     return getattr(self.env, name)
+
+    @property
+    def episode_len(self):
+        return self.env.episode_len
